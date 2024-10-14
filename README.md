@@ -1,1 +1,1 @@
-# Part-of-Speech-Tagger
+This project implements a Part-of-Speech (POS) tagger in Java using a Hidden Markov Model (HMM) and the Viterbi algorithm. It assigns POS tags to words in a sentence based on learned probabilities from training data.
