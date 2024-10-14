@@ -1,0 +1,224 @@
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.util.*;
+
+/**
+ * @author Alyssia Salas, Atziri Enriquez
+ * Viterbi decoding for CS10 PS5
+ */
+
+public class ViterbiDecoder {
+    // Transition map: from state -> (to state -> transition probability)
+    HashMap<String, HashMap<String, Double>> stateTransitions = new HashMap<>();
+    // Observation map: state -> (word -> observation probability)
+    HashMap<String, HashMap<String, Double>> emissionProbabilities = new HashMap<>();
+    double unseenPenalty = -100.0; // Penalty for unseen words in observation
+
+    /**
+     * Viterbi algorithm to decode the most likely sequence of tags for a given sentence.
+     * @param inputSentence the sentence to decode
+     * @return a list of predicted tags corresponding to the words in the sentence
+     */
+    public ArrayList<String> decodeViterbi(String inputSentence) {
+        ArrayList<String> predictedTags = new ArrayList<>();
+        ArrayList<HashMap<String, String>> backPointers = new ArrayList<>();
+
+        String[] words = inputSentence.toLowerCase().split(" ");
+
+        HashSet<String> currentStates = new HashSet<>();
+        HashMap<String, Double> currentScores = new HashMap<>();
+        currentStates.add("#"); // Start state
+        currentScores.put("#", 0.0);
+
+        for (String word : words) {
+            HashSet<String> nextStates = new HashSet<>();
+            HashMap<String, Double> nextScores = new HashMap<>();
+            HashMap<String, String> backPointerMap = new HashMap<>();
+
+            for (String currentState : currentStates) {
+                // Check if current state has any transitions
+                if (stateTransitions.containsKey(currentState)) {
+                    HashMap<String, Double> transitions = stateTransitions.get(currentState);
+                    
+                    for (String nextState : transitions.keySet()) {
+                        nextStates.add(nextState);
+
+                        // If next state exists in emission map, get the score; otherwise, use unseenPenalty
+                        double emissionScore = unseenPenalty;
+                        if (emissionProbabilities.containsKey(nextState)) {
+                            HashMap<String, Double> emissions = emissionProbabilities.get(nextState);
+                            if (emissions.containsKey(word)) {
+                                emissionScore = emissions.get(word);
+                            }
+                        }
+
+                        double transitionScore = transitions.get(nextState);
+                        double newScore = currentScores.get(currentState) + transitionScore + emissionScore;
+
+                        // If this path is better than any previously found for this nextState, update it
+                        if (!nextScores.containsKey(nextState) || newScore > nextScores.get(nextState)) {
+                            nextScores.put(nextState, newScore);
+                            backPointerMap.put(nextState, currentState);
+                        }
+                    }
+                }
+            }
+
+            currentStates = nextStates;
+            currentScores = nextScores;
+            backPointers.add(backPointerMap);
+        }
+
+        // Find the state with the highest score for the last word
+        String bestFinalState = null;
+        for (String state : currentScores.keySet()) {
+            if (bestFinalState == null || currentScores.get(state) > currentScores.get(bestFinalState)) {
+                bestFinalState = state;
+            }
+        }
+
+        // Backtrack to retrieve the most likely sequence of states
+        if (bestFinalState != null) {
+            predictedTags.add(bestFinalState);
+            for (int i = words.length - 1; i >= 0; i--) {
+                String predecessor = backPointers.get(i).get(bestFinalState);
+                if (predecessor == null || predecessor.equals("#")) break;
+                predictedTags.add(0, predecessor);
+                bestFinalState = predecessor;
+            }
+        }
+
+        return predictedTags;
+    }
+
+    /**
+     * Converts transition and emission frequencies to log probabilities.
+     */
+    public void convertToLogProbabilities() {
+        convertMapToLogProbabilities(stateTransitions);
+        convertMapToLogProbabilities(emissionProbabilities);
+    }
+
+    private void convertMapToLogProbabilities(HashMap<String, HashMap<String, Double>> probabilityMap) {
+        for (HashMap<String, Double> subMap : probabilityMap.values()) {
+            double total = calculateTotal(subMap);
+            for (String key : subMap.keySet()) {
+                subMap.put(key, Math.log(subMap.get(key) / total));
+            }
+        }
+    }
+
+    private double calculateTotal(HashMap<String, Double> map) {
+        double total = 0;
+        for (double value : map.values()) {
+            total += value;
+        }
+        return total;
+    }
+
+    /**
+     * Trains the model using sentence and tag files.
+     * @param sentencesFile the file containing sentences
+     * @param tagsFile the file containing corresponding tags
+     */
+    public void trainFromFiles(String sentencesFile, String tagsFile) throws Exception {
+        BufferedReader sentencesReader = new BufferedReader(new FileReader(sentencesFile));
+        BufferedReader tagsReader = new BufferedReader(new FileReader(tagsFile));
+
+        String sentenceLine;
+        String tagLine;
+
+        while ((tagLine = tagsReader.readLine()) != null) {
+            sentenceLine = sentencesReader.readLine();
+            String[] words = sentenceLine.toLowerCase().split(" ");
+            String[] tags = tagLine.toLowerCase().split(" ");
+
+            if (words.length == 0) continue;
+
+            // Handle start state transition
+            if (!stateTransitions.containsKey("#")) {
+                stateTransitions.put("#", new HashMap<>());
+            }
+            stateTransitions.get("#").put(tags[0], stateTransitions.get("#").getOrDefault(tags[0], 0.0) + 1);
+
+            for (int i = 0; i < tags.length; i++) {
+                // Update emission probabilities
+                if (!emissionProbabilities.containsKey(tags[i])) {
+                    emissionProbabilities.put(tags[i], new HashMap<>());
+                }
+                HashMap<String, Double> emissionsForTag = emissionProbabilities.get(tags[i]);
+                emissionsForTag.put(words[i], emissionsForTag.getOrDefault(words[i], 0.0) + 1);
+
+                // Update transition probabilities (except for the last tag)
+                if (i < tags.length - 1) {
+                    if (!stateTransitions.containsKey(tags[i])) {
+                        stateTransitions.put(tags[i], new HashMap<>());
+                    }
+                    HashMap<String, Double> transitionsForTag = stateTransitions.get(tags[i]);
+                    transitionsForTag.put(tags[i + 1], transitionsForTag.getOrDefault(tags[i + 1], 0.0) + 1);
+                }
+            }
+
+            // Ensure the last tag has an entry in the transition map, even if it transitions to nothing
+            if (!stateTransitions.containsKey(tags[tags.length - 1])) {
+                stateTransitions.put(tags[tags.length - 1], new HashMap<>());
+            }
+        }
+
+        sentencesReader.close();
+        tagsReader.close();
+
+        convertToLogProbabilities();
+    }
+
+    /**
+     * Tests the performance of the model using test files.
+     * @return a list of two integers: the number of correctly tagged words and the number of incorrectly tagged words.
+     */
+    public ArrayList<Integer> testFromFiles(String testSentencesFile, String testTagsFile) throws Exception {
+        ArrayList<Integer> results = new ArrayList<>();
+        int correctCount = 0, incorrectCount = 0;
+
+        BufferedReader sentencesReader = new BufferedReader(new FileReader(testSentencesFile));
+        BufferedReader tagsReader = new BufferedReader(new FileReader(testTagsFile));
+
+        String sentenceLine;
+        String tagLine;
+        while ((sentenceLine = sentencesReader.readLine()) != null) {
+            tagLine = tagsReader.readLine();
+            String[] trueTags = tagLine.toLowerCase().split(" ");
+            ArrayList<String> predictedTags = decodeViterbi(sentenceLine);
+
+            for (int i = 0; i < Math.min(trueTags.length, predictedTags.size()); i++) {
+                if (predictedTags.get(i).equals(trueTags[i])) {
+                    correctCount++;
+                } else {
+                    incorrectCount++;
+                }
+            }
+        }
+
+        results.add(correctCount);
+        results.add(incorrectCount);
+
+        sentencesReader.close();
+        tagsReader.close();
+        return results;
+    }
+
+    /**
+     * Runs a console-based interface for interactive input.
+     */
+    public void interactiveConsole() throws Exception {
+        Scanner scanner = new Scanner(System.in);
+        System.out.println("Enter a sentence: ");
+        String sentence = scanner.nextLine();
+        scanner.close();
+
+        if (stateTransitions.isEmpty() || emissionProbabilities.isEmpty()) {
+            throw new Exception("Model is not trained yet. Please train the model first.");
+        } else {
+            System.out.println("Predicted tags: " + decodeViterbi(sentence));
+        }
+    }
+}
